@@ -1,0 +1,5 @@
+build
+build/*
+factorio_mods
+/.project
+/.buildpath

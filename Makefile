@@ -4,7 +4,7 @@ VERSION_STRING := $(shell cat info.json|jq -r .version)
 OUTPUT_NAME := $(PACKAGE_NAME)_$(VERSION_STRING)
 OUTPUT_DIR := build/$(OUTPUT_NAME)
 
-PKG_COPY := $(wildcard *.md) graphics locale readme_content
+PKG_COPY := $(wildcard *.md)
 
 SED_FILES := $(shell find . -iname '*.json' -type f -not -path "./build/*") $(shell find . -iname '*.lua' -type f -not -path "./build/*")
 OUT_FILES := $(SED_FILES:%=$(OUTPUT_DIR)/%)
@@ -37,7 +37,7 @@ clean:
 	rm -rf build/
 
 verify:
-	luacheck . --exclude-files factorio_mods/ --exclude-files build/ --exclude-files data*.lua --exclude-files prototypes/ --globals game global remote serpent bit32 defines script table string log data util
+	luacheck . --exclude-files factorio_mods/ build/ stdlib/ data*.lua prototypes/ --globals MOD_NAME game global remote serpent bit32 defines script table string log data util
 
 install_mod:
 	if [ -L factorio_mods ] ; \
