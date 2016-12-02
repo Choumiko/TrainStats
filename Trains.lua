@@ -87,7 +87,7 @@ Trains.add = function(train)
   assert(not id or (id and not global._trains[id]))
   if id then
     global._trains[id] = {train = train, _locomotiveIDs = Trains.getLocomotiveIDs(train), _length = #train.carriages, id = id,
-      previous = {station = false, arrived = 0},
+      previous = {station = false, arrived = 0, left = 0},
       travelTimes = {},
       signalTimes = {},
     }

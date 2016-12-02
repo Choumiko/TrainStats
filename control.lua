@@ -38,23 +38,21 @@ local trainState = {}
 trainState[defines.train_state.wait_station] = function(data, tick)
   log("wait station")
   if not data.previous.station then
-    data.previous = {station = tostring(data.train.schedule.records[data.train.schedule.current].station), arrived = tick}
+    data.previous = {station = tostring(data.train.schedule.records[data.train.schedule.current].station), arrived = tick, left = 0}
     return
   end
-  local records = data.train.schedule.records
-  local current = data.train.schedule.current
   local fromStation = data.previous.station
-  local toStation = tostring(records[current].station)
+  local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
   data.travelTimes[fromStation] = data.travelTimes[fromStation] or {}
   data.travelTimes[fromStation][toStation] = data.travelTimes[fromStation][toStation] or {avg = 0, min= math.huge, max = 0, count = 0}
   local travelTimes = data.travelTimes[fromStation][toStation]
-  local timeBetween = tick - data.previous.arrived
+  local timeBetween = tick - data.previous.left
   if timeBetween < travelTimes.min then travelTimes.min = timeBetween end
   if timeBetween > travelTimes.max then travelTimes.max = timeBetween end
   local c = travelTimes.count
   travelTimes.avg = (travelTimes.avg * c + timeBetween) / (c + 1)
   travelTimes.count = c + 1
-  data.previous = {station = toStation, arrived = tick}
+  data.previous = {station = toStation, arrived = tick, left = 0}
 
   local signalTimes = data.signalTimes[fromStation] and data.signalTimes[fromStation][toStation]
   if signalTimes then
@@ -77,10 +75,8 @@ trainState[defines.train_state.wait_signal] = function(data, tick)
     return
   end
   log("wait signal")
-  local records = data.train.schedule.records
-  local current = data.train.schedule.current
   local fromStation = data.previous.station
-  local toStation = tostring(records[current].station)
+  local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
   data.signalTimes[fromStation] = data.signalTimes[fromStation] or {}
   data.signalTimes[fromStation][toStation] = data.signalTimes[fromStation][toStation] or {arrived = 0, current = 0, avg = 0, min= math.huge, max = 0, count = 0}
   local signalTimes = data.signalTimes[fromStation][toStation]
@@ -93,10 +89,8 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     if not data.previous.station then
       return
     end
-    local records = data.train.schedule.records
-    local current = data.train.schedule.current
     local fromStation = data.previous.station
-    local toStation = tostring(records[current].station)
+    local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
     local signalTimes = data.signalTimes[fromStation][toStation]
     if not signalTimes or not signalTimes.arrived then return end
     local time = tick - data.signalTimes[fromStation][toStation].arrived
@@ -114,6 +108,7 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     global.stationStats[data.previous.station] = global.stationStats[data.previous.station] or {min = math.huge, max = 0, avg = 0, count = 0}
     local stationStats = global.stationStats[data.previous.station]
     local waitingTime = tick - data.previous.arrived
+    data.previous.left = tick
     if waitingTime < stationStats.min then stationStats.min = waitingTime end
     if waitingTime > stationStats.max then stationStats.max = waitingTime end
     local c = stationStats.count
@@ -160,6 +155,40 @@ local interface = {
       data.id = id
       data.travelTimes = data.travelTimes or {}
       data.signalTimes = data.signalTimes or {}
+      data.previous.left = data.previous.left or data.previous.arrived
+    end
+  end,
+
+  reset = function()
+    initGlobal()
+    for from, toStation in pairs(global.stationStats) do
+      for to, data in pairs(toStation) do
+        data.min = math.huge
+        data.max = 0
+        data.avg = 0
+        data.count = 0
+      end
+    end
+    for id, trainData in pairs(global._trains) do
+      trainData.previous.station = false
+      for from, toStation in pairs(trainData.travelTimes) do
+        for to, data in pairs(toStation) do
+          data.min = math.huge
+          data.max = 0
+          data.avg = 0
+          data.count = 0
+        end
+      end
+      for from, toStation in pairs(trainData.signalTimes) do
+        for to, data in pairs(toStation) do
+          data.arrived = false
+          data.current = 0
+          data.min = math.huge
+          data.max = 0
+          data.avg = 0
+          data.count = 0
+        end
+      end
     end
   end
 }
