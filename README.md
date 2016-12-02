@@ -4,8 +4,10 @@ Train Statistics
 Tracked statistics
 ---
 
- - Minimum, maximum and average time between stations
- - Minimum, maximum and average time spent waiting at signals
+Minimum, maximum and average for time:
+ - between stations
+ - waiting at stations
+ - waiting at signals
 
 ***
 Changelog
