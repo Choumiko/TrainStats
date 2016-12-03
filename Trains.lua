@@ -90,6 +90,7 @@ Trains.add = function(train)
       previous = {station = false, arrived = 0, left = 0},
       travelTimes = {},
       signalTimes = {},
+      waitingTimes = {},
     }
     return id
   end

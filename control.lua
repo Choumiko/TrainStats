@@ -3,6 +3,12 @@ local Trains = require 'Trains'
 local math = math
 MOD_NAME = "TrainStatistics"
 
+
+local function round(num, idp)
+  local mult = 10 ^ (idp or 0)
+  return math.floor(num * mult + 0.5) / mult
+end
+
 local function initGlobal()
   log("initGlobal")
   Trains.isSetup = true
@@ -34,6 +40,15 @@ local function onConfigurationChanged(data)
   end
 end
 
+local function updateStatistics(data, time)
+  if time < data.min then data.min = time end
+  if time > data.max then data.max = time end
+  local c = data.count
+  data.avg = (data.avg * c + time) / (c + 1)
+  data.count = c + 1
+  data.last = time
+end
+
 local trainState = {}
 trainState[defines.train_state.wait_station] = function(data, tick)
   log("wait station")
@@ -46,28 +61,22 @@ trainState[defines.train_state.wait_station] = function(data, tick)
   data.travelTimes[fromStation] = data.travelTimes[fromStation] or {}
   data.travelTimes[fromStation][toStation] = data.travelTimes[fromStation][toStation] or {avg = 0, min= math.huge, max = 0, count = 0}
   local travelTimes = data.travelTimes[fromStation][toStation]
-  local timeBetween = tick - data.previous.left
-  if timeBetween < travelTimes.min then travelTimes.min = timeBetween end
-  if timeBetween > travelTimes.max then travelTimes.max = timeBetween end
-  local c = travelTimes.count
-  travelTimes.avg = (travelTimes.avg * c + timeBetween) / (c + 1)
-  travelTimes.count = c + 1
+  local time = tick - data.previous.left
+  updateStatistics(travelTimes,time)
   data.previous = {station = toStation, arrived = tick, left = 0}
 
+  --[[
   local signalTimes = data.signalTimes[fromStation] and data.signalTimes[fromStation][toStation]
   if signalTimes then
-    c = signalTimes.count
+    local c = signalTimes.count
     signalTimes.avg = (signalTimes.avg * c + signalTimes.current) / (c + 1)
     signalTimes.count = c + 1
     signalTimes.arrived = false
     signalTimes.current = 0
   end
-
-  log(data.id .. ": " .. fromStation .. " -> " .. toStation .. " : " .. timeBetween/60 .. "s" )
+]]--
+  log(data.id .. ": " .. fromStation .. " -> " .. toStation .. " : " .. time/60 .. "s" )
   log("TT avg: " .. travelTimes.avg/60 .. " min: " .. travelTimes.min/60 .. " max: " .. travelTimes.max/60 .. " c: " .. travelTimes.count)
-  if signalTimes then
-    log("ST avg: " .. signalTimes.avg/60 .. " min: " .. signalTimes.min/60 .. " max: " .. signalTimes.max/60 .. " c: " .. signalTimes.count)
-  end
 end
 
 trainState[defines.train_state.wait_signal] = function(data, tick)
@@ -78,7 +87,7 @@ trainState[defines.train_state.wait_signal] = function(data, tick)
   local fromStation = data.previous.station
   local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
   data.signalTimes[fromStation] = data.signalTimes[fromStation] or {}
-  data.signalTimes[fromStation][toStation] = data.signalTimes[fromStation][toStation] or {arrived = 0, current = 0, avg = 0, min= math.huge, max = 0, count = 0}
+  data.signalTimes[fromStation][toStation] = data.signalTimes[fromStation][toStation] or {arrived = 0, last = 0, avg = 0, min= math.huge, max = 0, count = 0}
   local signalTimes = data.signalTimes[fromStation][toStation]
   signalTimes.arrived = tick
 end
@@ -93,28 +102,26 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
     local signalTimes = data.signalTimes[fromStation][toStation]
     if not signalTimes or not signalTimes.arrived then return end
-    local time = tick - data.signalTimes[fromStation][toStation].arrived
-    if time < signalTimes.min then signalTimes.min = time end
-    if time > signalTimes.max then signalTimes.max = time end
-    signalTimes.current = signalTimes.current + time
-
+    local time = tick - signalTimes.arrived
+    updateStatistics(signalTimes,time)
     log(data.id .. ": " .. fromStation .. " -> " .. toStation .. " : " .. time/60 .. "s" )
-    log("avg: " .. signalTimes.avg/60 .. " min: " .. signalTimes.min/60 .. " max: " .. signalTimes.max/60 .. " current: " .. signalTimes.current .. " c: " .. signalTimes.count)
+    log("avg: " .. signalTimes.avg/60 .. " min: " .. signalTimes.min/60 .. " max: " .. signalTimes.max/60 .. " c: " .. signalTimes.count)
     return
   end
   if data.previousState == defines.train_state.wait_station then
     if not data.previous.station then return end
     log("left station")
-    global.stationStats[data.previous.station] = global.stationStats[data.previous.station] or {min = math.huge, max = 0, avg = 0, count = 0}
-    local stationStats = global.stationStats[data.previous.station]
-    local waitingTime = tick - data.previous.arrived
+    local station = data.previous.station
+    global.stationStats[station] = global.stationStats[station] or {min = math.huge, max = 0, avg = 0, count = 0, last = 0}
+    local stationStats = global.stationStats[station]
+    local time = tick - data.previous.arrived
+    data.waitingTimes[station] = data.waitingTimes[station] or {min = math.huge, max = 0, avg = 0, count = 0, last = 0}
     data.previous.left = tick
-    if waitingTime < stationStats.min then stationStats.min = waitingTime end
-    if waitingTime > stationStats.max then stationStats.max = waitingTime end
-    local c = stationStats.count
-    stationStats.avg = (stationStats.avg * c + waitingTime) / (c + 1)
-    stationStats.count = c + 1
-    log("Station stats for " .. data.previous.station .. " min: " .. stationStats.min/60 .. " max: " .. stationStats.max/60 .. " avg: " .. stationStats.avg/60 .. " c: ".. stationStats.count)
+
+    updateStatistics(stationStats,time)
+    updateStatistics(data.waitingTimes[station], time)
+
+    log("waiting stats for " .. data.previous.station .. " min: " .. stationStats.min/60 .. " max: " .. stationStats.max/60 .. " avg: " .. stationStats.avg/60 .. " last: ".. stationStats.last/60)
     return
   end
 end
@@ -148,50 +155,113 @@ script.on_init(onInit)
 script.on_load(onLoad)
 script.on_configuration_changed(onConfigurationChanged)
 -- /c remote.call("trainstats", "init")
-local interface = {
-  init = function()
-    initGlobal()
-    for id, data in pairs(global._trains) do
-      data.id = id
-      data.travelTimes = data.travelTimes or {}
-      data.signalTimes = data.signalTimes or {}
-      data.previous.left = data.previous.left or data.previous.arrived
-    end
-  end,
-
-  reset = function()
-    initGlobal()
-    for from, toStation in pairs(global.stationStats) do
-      for to, data in pairs(toStation) do
-        data.min = math.huge
-        data.max = 0
-        data.avg = 0
-        data.count = 0
-      end
-    end
-    for id, trainData in pairs(global._trains) do
-      trainData.previous.station = false
-      for from, toStation in pairs(trainData.travelTimes) do
-        for to, data in pairs(toStation) do
-          data.min = math.huge
-          data.max = 0
-          data.avg = 0
-          data.count = 0
-        end
-      end
-      for from, toStation in pairs(trainData.signalTimes) do
-        for to, data in pairs(toStation) do
-          data.arrived = false
-          data.current = 0
-          data.min = math.huge
-          data.max = 0
-          data.avg = 0
-          data.count = 0
-        end
-      end
-    end
+local interface = {}
+interface.init = function()
+  initGlobal()
+  for id, data in pairs(global._trains) do
+    data.id = id
+    data.travelTimes = data.travelTimes or {}
+    data.signalTimes = data.signalTimes or {}
+    data.waitingTimes = data.waitingTimes or {}
+    data.previous.left = data.previous.left or data.previous.arrived
   end
-}
+end
+
+interface.reset = function()
+  --log(serpent.block(global.stationStats,{comment=false}))
+  for _, data in pairs(global.stationStats) do
+    data.min = math.huge
+    data.max = 0
+    data.avg = 0
+    data.count = 0
+  end
+  for _, trainData in pairs(global._trains) do
+    trainData.previous.station = false
+    trainData.travelTimes = {}
+    trainData.signalTimes = {}
+    trainData.waitingTimes = {}
+  end
+  interface.init()
+end
+
+interface.gui = function()
+  if game.player.gui.left.trainStats then
+    game.player.gui.left.trainStats.destroy()
+    return
+  end
+  global.selected =  game.player.selected and game.player.selected.train or game.player.vehicle and game.player.vehicle.train
+  local train = game.player.selected and game.player.selected.train or global.selected
+  local data = Trains.getData(train)
+  local records = data.train.schedule.records
+  if not records then return end
+  local mainFrame = game.player.gui.left.add{type = "frame", name = "trainStats", caption = "Statistics",
+    direction = "vertical"}
+  local buttonFlow = mainFrame.add{type = "flow", name = "trainstats_buttonFlow", direction = "horizontal"}
+  local inboundFrame = mainFrame.add{type = "frame", name = "trainstats_frame1"}
+  buttonFlow.add{type = "button", caption = "Time", name = "trainstats_tgl_time"}
+  buttonFlow.add{type = "button", caption = "Waiting", name = "trainstats_tgl_waiting"}
+  buttonFlow.add{type = "button", caption = "Signals", name = "trainstats_tgl_signals"}
+  --buttonFlow.add{type = "button", caption = "Time", name = "trainstats_tgl_time"}
+  local pane = inboundFrame.add{
+    type = "scroll-pane",
+  }
+  pane.style.maximal_height = math.ceil(40*5)
+  pane.horizontal_scroll_policy = "never"
+  pane.vertical_scroll_policy = "auto"
+  local statsTable = pane.add{type = "table", name = "trainstats_table", colspan = 7}
+  statsTable.add{type = "label", caption = "From"}
+  statsTable.add{type = "label", caption = ""}
+  statsTable.add{type = "label", caption = "To"}
+  statsTable.add{type = "label", caption = "min"}
+  statsTable.add{type = "label", caption = "max"}
+  statsTable.add{type = "label", caption = "avg"}
+  statsTable.add{type = "label", caption = "last"}
+  --[[
+  statsTable.add{type = "label", caption = "waiting"}
+  statsTable.add{type = "label", caption = ""}
+  statsTable.add{type = "label", caption = "waiting"}
+  statsTable.add{type = "label", caption = ""}
+  statsTable.add{type = "label", caption = ""}
+  statsTable.add{type = "label", caption = ""}
+  statsTable.add{type = "label", caption = ""}
+  ]]--
+  for i = 1, #records do
+    local fromStation = tostring(records[i].station)
+    local next = (i % #records) + 1
+    local toStation = tostring(records[next].station)
+    if data.travelTimes[fromStation] and data.travelTimes[fromStation][toStation] then
+      local stats = data.travelTimes[fromStation][toStation]
+      statsTable.add{type = "label", caption = fromStation}
+      statsTable.add{type = "label", caption = " "}
+      statsTable.add{type = "label", caption = toStation}
+      statsTable.add{type = "label", caption = round(stats.min/60, 1)}
+      statsTable.add{type = "label", caption = round(stats.max/60, 1)}
+      statsTable.add{type = "label", caption = round(stats.avg/60, 1)}
+      statsTable.add{type = "label", caption = round(stats.last/60, 1)}
+    end
+    --[[
+    local stats = data.waitingTimes[fromStation]
+    local caption = stats and round(stats.min/60, 1) .. " / " .. round(stats.max/60, 1) .. " / " ..round(stats.avg/60, 1) .. " / " .. round(stats.last/60, 1) or ""
+    statsTable.add{type = "label", caption = caption}
+
+    statsTable.add{type = "label", caption = ""}
+
+    stats = stats and data.waitingTimes[toStation]
+    caption = stats and round(stats.min/60, 1) .. " / " .. round(stats.max/60, 1) .. " / " ..round(stats.avg/60, 1) .. " / " .. round(stats.last/60, 1) or ""
+    statsTable.add{type = "label", caption = caption}
+
+    statsTable.add{type = "label", caption = ""}
+    statsTable.add{type = "label", caption = ""}
+    statsTable.add{type = "label", caption = ""}
+    statsTable.add{type = "label", caption = ""}
+]]--
+  end
+end
+--/c remote.call("trainstats", "saveVar")
+interface.saveVar = function(var, name, varname)
+  local n = name or ""
+  game.write_file("trainStats"..n..".lua", serpent.block(var or global, {name=varname or "global", comment=false}))
+end
 
 remote.add_interface("trainstats", interface)
 
