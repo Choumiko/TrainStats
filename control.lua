@@ -2,6 +2,7 @@ local Event = require 'stdlib.event.event'
 local Trains = require 'Trains'
 local math = math
 MOD_NAME = "TrainStatistics"
+local ROLLING_AVERAGE_SIZE = 5
 
 
 local function round(num, idp)
@@ -41,12 +42,19 @@ local function onConfigurationChanged(data)
 end
 
 local function updateStatistics(data, time)
-  if time < data.min then data.min = time end
-  if time > data.max then data.max = time end
-  local c = data.count
-  data.avg = (data.avg * c + time) / (c + 1)
-  data.count = c + 1
-  data.last = time
+  data.index = ((data.index or 0) % ROLLING_AVERAGE_SIZE) + 1
+  data.sets[data.index] = time
+  local sum = 0
+  local min = data.sets[1]
+  local max = data.sets[1]
+  for _, t in pairs(data.sets) do
+    sum = sum + t
+    if t < min then min = t end
+    if t > max then max = t end
+  end
+  data.min = min
+  data.max = max
+  data.avg = sum / #data.sets
 end
 
 local trainState = {}
@@ -59,7 +67,7 @@ trainState[defines.train_state.wait_station] = function(data, tick)
   local fromStation = data.previous.station
   local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
   data.travelTimes[fromStation] = data.travelTimes[fromStation] or {}
-  data.travelTimes[fromStation][toStation] = data.travelTimes[fromStation][toStation] or {avg = 0, min= math.huge, max = 0, count = 0}
+  data.travelTimes[fromStation][toStation] = data.travelTimes[fromStation][toStation] or {min= math.huge, max = 0, avg = 0, index = 0, sets = {}}
   local travelTimes = data.travelTimes[fromStation][toStation]
   local time = tick - data.previous.left
   updateStatistics(travelTimes,time)
@@ -75,8 +83,6 @@ trainState[defines.train_state.wait_station] = function(data, tick)
     signalTimes.current = 0
   end
 ]]--
-  log(data.id .. ": " .. fromStation .. " -> " .. toStation .. " : " .. time/60 .. "s" )
-  log("TT avg: " .. travelTimes.avg/60 .. " min: " .. travelTimes.min/60 .. " max: " .. travelTimes.max/60 .. " c: " .. travelTimes.count)
 end
 
 trainState[defines.train_state.wait_signal] = function(data, tick)
@@ -87,7 +93,7 @@ trainState[defines.train_state.wait_signal] = function(data, tick)
   local fromStation = data.previous.station
   local toStation = tostring(data.train.schedule.records[data.train.schedule.current].station)
   data.signalTimes[fromStation] = data.signalTimes[fromStation] or {}
-  data.signalTimes[fromStation][toStation] = data.signalTimes[fromStation][toStation] or {arrived = 0, last = 0, avg = 0, min= math.huge, max = 0, count = 0}
+  data.signalTimes[fromStation][toStation] = data.signalTimes[fromStation][toStation] or {arrived = 0, min= math.huge, max = 0, avg = 0, index = 0, sets = {}}
   local signalTimes = data.signalTimes[fromStation][toStation]
   signalTimes.arrived = tick
 end
@@ -104,24 +110,21 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     if not signalTimes or not signalTimes.arrived then return end
     local time = tick - signalTimes.arrived
     updateStatistics(signalTimes,time)
-    log(data.id .. ": " .. fromStation .. " -> " .. toStation .. " : " .. time/60 .. "s" )
-    log("avg: " .. signalTimes.avg/60 .. " min: " .. signalTimes.min/60 .. " max: " .. signalTimes.max/60 .. " c: " .. signalTimes.count)
     return
   end
   if data.previousState == defines.train_state.wait_station then
     if not data.previous.station then return end
     log("left station")
     local station = data.previous.station
-    global.stationStats[station] = global.stationStats[station] or {min = math.huge, max = 0, avg = 0, count = 0, last = 0}
+    global.stationStats[station] = global.stationStats[station] or {min = math.huge, max = 0, avg = 0, index = 0, sets = {}}
     local stationStats = global.stationStats[station]
     local time = tick - data.previous.arrived
-    data.waitingTimes[station] = data.waitingTimes[station] or {min = math.huge, max = 0, avg = 0, count = 0, last = 0}
+    data.waitingTimes[station] = data.waitingTimes[station] or {min = math.huge, max = 0, avg = 0, index = 0, sets = {}}
     data.previous.left = tick
 
     updateStatistics(stationStats,time)
     updateStatistics(data.waitingTimes[station], time)
 
-    log("waiting stats for " .. data.previous.station .. " min: " .. stationStats.min/60 .. " max: " .. stationStats.max/60 .. " avg: " .. stationStats.avg/60 .. " last: ".. stationStats.last/60)
     return
   end
 end
@@ -173,7 +176,8 @@ interface.reset = function()
     data.min = math.huge
     data.max = 0
     data.avg = 0
-    data.count = 0
+    data.index = 0
+    data.sets = {[1] = 0}
   end
   for _, trainData in pairs(global._trains) do
     trainData.previous.station = false
@@ -237,7 +241,7 @@ interface.gui = function()
       statsTable.add{type = "label", caption = round(stats.min/60, 1)}
       statsTable.add{type = "label", caption = round(stats.max/60, 1)}
       statsTable.add{type = "label", caption = round(stats.avg/60, 1)}
-      statsTable.add{type = "label", caption = round(stats.last/60, 1)}
+      statsTable.add{type = "label", caption = round(stats.sets[stats.index]/60, 1)}
     end
     --[[
     local stats = data.waitingTimes[fromStation]
