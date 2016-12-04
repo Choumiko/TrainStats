@@ -81,6 +81,17 @@ Trains.getLocomotiveIDs = function(train)
   return locomotives, c
 end
 
+Trains.getType = function(train)
+  local s = ""
+  local locos = train.locomotives
+  if locos then
+    s = locos.front_movers and s .. #locos.front_movers or s .. "0"
+    s = train.cargo_wagons and s .. "-" .. #train.cargo_wagons or s .. "-0"
+    s = locos.back_movers and s .. "-" .. #locos.back_movers or s
+    return s
+  end
+end
+
 Trains.add = function(train)
   assert(train.valid)
   local id = Trains.get_train_id(train)
@@ -169,6 +180,10 @@ Trains.getData = function(train)
   local id = Trains.get_train_id(train)
   if id then
     local data = global._trains[id]
+    if not data then
+      Trains.add(train)
+      return Trains.getData(train)
+    end
     if data and not data.train.valid then
       log("invalid")
       Trains.revalidate(train)
