@@ -91,6 +91,7 @@ Trains.add = function(train)
       travelTimes = {},
       signalTimes = {},
       waitingTimes = {},
+      guis = {}
     }
     return id
   end

@@ -1,7 +1,9 @@
 local Event = require 'stdlib.event.event'
 local Trains = require 'Trains'
+local GUI = require 'stdlib.gui.gui'
+
 local math = math
-MOD_NAME = "TrainStatistics"
+MOD_NAME = "TrainStats"
 local ROLLING_AVERAGE_SIZE = 5
 
 
@@ -15,6 +17,7 @@ local function initGlobal()
   Trains.isSetup = true
   global._trains = global._trains or {}
   global.stationStats = global.stationStats or {}
+  global.player = global.player or {}
 end
 
 local function onInit()
@@ -38,6 +41,9 @@ local function onConfigurationChanged(data)
     --oldVersion = data.mod_changes[MOD_NAME].old_version
     log("config changed")
     initGlobal()
+    for _, trainData in pairs(global._trains) do
+      trainData.guis = trainData.guis or {}
+    end
   end
 end
 
@@ -83,6 +89,7 @@ trainState[defines.train_state.wait_station] = function(data, tick)
     signalTimes.current = 0
   end
 ]]--
+  return true
 end
 
 trainState[defines.train_state.wait_signal] = function(data, tick)
@@ -109,8 +116,8 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     local signalTimes = data.signalTimes[fromStation][toStation]
     if not signalTimes or not signalTimes.arrived then return end
     local time = tick - signalTimes.arrived
-    updateStatistics(signalTimes,time)
-    return
+    updateStatistics(signalTimes,time, data)
+    return true
   end
   if data.previousState == defines.train_state.wait_station then
     if not data.previous.station then return end
@@ -125,7 +132,7 @@ trainState[defines.train_state.on_the_path] = function(data, tick)
     updateStatistics(stationStats,time)
     updateStatistics(data.waitingTimes[station], time)
 
-    return
+    return true
   end
 end
 
@@ -135,70 +142,19 @@ trainState[defines.train_state.stop_for_auto_control] = function(data, tick)
   end
 end
 
-local function on_train_changed_state(event)
-  --log("train changed state " .. event.train.state)
-  if not trainState[event.train.state] then return end
-  local data = Trains.getData(event.train)
-  local train = event.train
-  local schedule = train.schedule
-  data.previousState = data.currentState
-  data.currentState = train.state
-  if not schedule.records or #schedule.records < 1 then return end
-  trainState[train.state](data, event.tick)
-  --log(serpent.line(data,{comment=false}))
-end
-
-Event.register(defines.events.on_built_entity, Trains._on_rolling_stock_built)
-Event.register(defines.events.on_entity_died, Trains._on_rolling_stock_removed)
-Event.register(defines.events.on_preplayer_mined_item, Trains._on_rolling_stock_removed)
-Event.register(defines.events.on_tick, Trains.on_tick)
-Event.register(defines.events.on_train_changed_state, on_train_changed_state)
-
-script.on_init(onInit)
-script.on_load(onLoad)
-script.on_configuration_changed(onConfigurationChanged)
--- /c remote.call("trainstats", "init")
-local interface = {}
-interface.init = function()
-  initGlobal()
-  for id, data in pairs(global._trains) do
-    data.id = id
-    data.travelTimes = data.travelTimes or {}
-    data.signalTimes = data.signalTimes or {}
-    data.waitingTimes = data.waitingTimes or {}
-    data.previous.left = data.previous.left or data.previous.arrived
-  end
-end
-
-interface.reset = function()
-  --log(serpent.block(global.stationStats,{comment=false}))
-  for _, data in pairs(global.stationStats) do
-    data.min = math.huge
-    data.max = 0
-    data.avg = 0
-    data.index = 0
-    data.sets = {[1] = 0}
-  end
-  for _, trainData in pairs(global._trains) do
-    trainData.previous.station = false
-    trainData.travelTimes = {}
-    trainData.signalTimes = {}
-    trainData.waitingTimes = {}
-  end
-  interface.init()
-end
-
-interface.gui = function()
-  if game.player.gui.left.trainStats then
-    game.player.gui.left.trainStats.destroy()
+GUI.destroy = function(player)
+  if player.gui.left.trainStats and player.gui.left.trainStats.valid then
+    player.gui.left.trainStats.destroy()
     return
   end
-  global.selected =  game.player.selected and game.player.selected.train or game.player.vehicle and game.player.vehicle.train
-  local train = game.player.selected and game.player.selected.train or global.selected
+end
+
+GUI.create = function(player)
+  local train = player.vehicle.train
   local data = Trains.getData(train)
   local records = data.train.schedule.records
   if not records then return end
-  local mainFrame = game.player.gui.left.add{type = "frame", name = "trainStats", caption = "Statistics",
+  local mainFrame = player.gui.left.add{type = "frame", name = "trainStats", caption = "Statistics",
     direction = "vertical"}
   local buttonFlow = mainFrame.add{type = "flow", name = "trainstats_buttonFlow", direction = "horizontal"}
   local inboundFrame = mainFrame.add{type = "frame", name = "trainstats_frame1"}
@@ -260,6 +216,115 @@ interface.gui = function()
     statsTable.add{type = "label", caption = ""}
 ]]--
   end
+  return mainFrame
+end
+
+GUI.displayTravelTime = function(event)
+  game.players[event.player_index].print("traveltime")
+  log(serpent.block(event, {comment=false}))
+end
+
+GUI.displayWaitingTime = function(event)
+  game.players[event.player_index].print("waitingtime")
+  log(serpent.block(event, {comment=false}))
+end
+
+GUI.displaySignalTimes = function(event)
+  game.players[event.player_index].print("signaltimes")
+  log(serpent.block(event, {comment=false}))
+end
+
+local function on_train_changed_state(event)
+  --log("train changed state " .. event.train.state)
+  if not trainState[event.train.state] then return end
+  local data = Trains.getData(event.train)
+  local train = event.train
+  local schedule = train.schedule
+  data.previousState = data.currentState
+  data.currentState = train.state
+  if not schedule.records or #schedule.records < 1 then return end
+  if trainState[train.state](data, event.tick) then
+    for player_index, gui in pairs(data.guis) do
+      if gui.valid then
+        GUI.destroy(game.players[player_index])
+        data.guis[player_index] = GUI.create(game.players[player_index])
+      else
+        data.guis[player_index] = nil
+      end
+    end
+  end
+  --log(serpent.line(data,{comment=false}))
+end
+
+local function on_player_driving_changed_state(event)
+  local player = game.players[event.player_index]
+  if player.vehicle and (player.vehicle.type == "locomotive" or player.vehicle.type == "cargo-wagon") then
+    global.player[player.index] = player.vehicle
+    local trainInfo = Trains.getData(player.vehicle.train)
+    if trainInfo then
+      trainInfo.guis[player.index] = GUI.create(player)
+    end
+  end
+  if not player.vehicle and global.player[player.index] then
+    GUI.destroy(player)
+    local vehicle = global.player[player.index]
+    if vehicle.valid and (vehicle.type == "locomotive" or vehicle.type == "cargo-wagon") then
+      local trainInfo = Trains.getData(global.player[player.index].train)
+      if trainInfo then
+        trainInfo.guis[player.index] = nil
+      end
+    end
+    global.player[player.index] = nil
+  end
+end
+
+Event.register(defines.events.on_built_entity, Trains._on_rolling_stock_built)
+Event.register(defines.events.on_entity_died, Trains._on_rolling_stock_removed)
+Event.register(defines.events.on_preplayer_mined_item, Trains._on_rolling_stock_removed)
+Event.register(defines.events.on_tick, Trains.on_tick)
+Event.register(defines.events.on_train_changed_state, on_train_changed_state)
+Event.register(defines.events.on_player_driving_changed_state, on_player_driving_changed_state)
+
+GUI.on_click('trainstats_tgl_time', GUI.displayTravelTime)
+GUI.on_click('trainstats_tgl_waiting', GUI.displayWaitingTime)
+GUI.on_click('trainstats_tgl_signals', GUI.displaySignalTimes)
+
+script.on_init(onInit)
+script.on_load(onLoad)
+script.on_configuration_changed(onConfigurationChanged)
+-- /c remote.call("trainstats", "init")
+local interface = {}
+interface.init = function()
+  initGlobal()
+  for id, data in pairs(global._trains) do
+    data.id = id
+    data.travelTimes = data.travelTimes or {}
+    data.signalTimes = data.signalTimes or {}
+    data.waitingTimes = data.waitingTimes or {}
+    data.previous.left = data.previous.left or data.previous.arrived
+  end
+end
+
+interface.reset = function()
+  --log(serpent.block(global.stationStats,{comment=false}))
+  for _, data in pairs(global.stationStats) do
+    data.min = math.huge
+    data.max = 0
+    data.avg = 0
+    data.index = 0
+    data.sets = {[1] = 0}
+  end
+  for _, trainData in pairs(global._trains) do
+    trainData.previous.station = false
+    trainData.travelTimes = {}
+    trainData.signalTimes = {}
+    trainData.waitingTimes = {}
+  end
+  interface.init()
+end
+
+interface.gui = function()
+
 end
 --/c remote.call("trainstats", "saveVar")
 interface.saveVar = function(var, name, varname)
