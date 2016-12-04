@@ -18,6 +18,23 @@ local function initGlobal()
   global._trains = global._trains or {}
   global.stationStats = global.stationStats or {}
   global.player = global.player or {}
+  global.guiSettings = global.guiSettings or {}
+end
+
+local function initPlayer(player)
+  global.guiSettings[player.index] = global.guiSettings[player.index] or {}
+  local settings = global.guiSettings[player.index]
+  settings.displayedStats = settings.displayedStats or "travelTimes"
+end
+
+local function initPlayers()
+  for _, p in pairs(game.players) do
+    initPlayer(p)
+  end
+end
+
+local function on_player_created(event)
+  initPlayer(game.players[event.player_index])
 end
 
 local function onInit()
@@ -41,6 +58,7 @@ local function onConfigurationChanged(data)
     --oldVersion = data.mod_changes[MOD_NAME].old_version
     log("config changed")
     initGlobal()
+    initPlayers()
     for _, trainData in pairs(global._trains) do
       trainData.guis = trainData.guis or {}
     end
@@ -149,18 +167,35 @@ GUI.destroy = function(player)
   end
 end
 
+GUI.button = function(args)
+  args.type = "button"
+  if not args.style then
+    args.style = "trainStats_button"
+  end
+  return args
+end
+
+GUI.label = function(args)
+  args.type = "label"
+  if not args.style then
+    args.style = "trainStats_label"
+  end
+  return args
+end
+
 GUI.create = function(player)
   local train = player.vehicle.train
   local data = Trains.getData(train)
   local records = data.train.schedule.records
   if not records then return end
-  local mainFrame = player.gui.left.add{type = "frame", name = "trainStats", caption = "Statistics",
+  local mainFrame = player.gui.left.add{type = "frame", name = "trainStats", caption = "Statistics for train #" .. data.id,
     direction = "vertical"}
+    mainFrame.add(GUI.label{caption=Trains.getType(train)})
   local buttonFlow = mainFrame.add{type = "flow", name = "trainstats_buttonFlow", direction = "horizontal"}
   local inboundFrame = mainFrame.add{type = "frame", name = "trainstats_frame1"}
-  buttonFlow.add{type = "button", caption = "Time", name = "trainstats_tgl_time"}
-  buttonFlow.add{type = "button", caption = "Waiting", name = "trainstats_tgl_waiting"}
-  buttonFlow.add{type = "button", caption = "Signals", name = "trainstats_tgl_signals"}
+  buttonFlow.add(GUI.button({caption = "Time", name = "trainstats_tgl_time"}))
+  buttonFlow.add(GUI.button({caption = "Waiting", name = "trainstats_tgl_waiting"}))
+  buttonFlow.add(GUI.button({caption = "Signals", name = "trainstats_tgl_signals"}))
   --buttonFlow.add{type = "button", caption = "Time", name = "trainstats_tgl_time"}
   local pane = inboundFrame.add{
     type = "scroll-pane",
@@ -168,70 +203,62 @@ GUI.create = function(player)
   pane.style.maximal_height = math.ceil(40*5)
   pane.horizontal_scroll_policy = "never"
   pane.vertical_scroll_policy = "auto"
-  local statsTable = pane.add{type = "table", name = "trainstats_table", colspan = 7}
-  statsTable.add{type = "label", caption = "From"}
-  statsTable.add{type = "label", caption = ""}
-  statsTable.add{type = "label", caption = "To"}
-  statsTable.add{type = "label", caption = "min"}
-  statsTable.add{type = "label", caption = "max"}
-  statsTable.add{type = "label", caption = "avg"}
-  statsTable.add{type = "label", caption = "last"}
-  --[[
-  statsTable.add{type = "label", caption = "waiting"}
-  statsTable.add{type = "label", caption = ""}
-  statsTable.add{type = "label", caption = "waiting"}
-  statsTable.add{type = "label", caption = ""}
-  statsTable.add{type = "label", caption = ""}
-  statsTable.add{type = "label", caption = ""}
-  statsTable.add{type = "label", caption = ""}
-  ]]--
+  local statsTable = pane.add{type = "table", name = "trainstats_table", colspan = 7, style = "trainStats_table"}
+  --statsTable.style.cell_spacing = 7
+  statsTable.add(GUI.label({caption = "From"}))
+  statsTable.add(GUI.label({caption = ""}))
+  statsTable.add(GUI.label({caption = "To"}))
+  statsTable.add(GUI.label({caption = "min"}))
+  statsTable.add(GUI.label({caption = "max"}))
+  statsTable.add(GUI.label({caption = "avg"}))
+  statsTable.add(GUI.label({caption = "last", tooltip = "asdf"}))
+  local guiSetting = global.guiSettings[player.index].displayedStats
+  local statsToDisplay = data[guiSetting]
+  local displayed = {}
   for i = 1, #records do
     local fromStation = tostring(records[i].station)
+    displayed[fromStation] = displayed[fromStation] or {}
     local next = (i % #records) + 1
     local toStation = tostring(records[next].station)
-    if data.travelTimes[fromStation] and data.travelTimes[fromStation][toStation] then
-      local stats = data.travelTimes[fromStation][toStation]
-      statsTable.add{type = "label", caption = fromStation}
-      statsTable.add{type = "label", caption = " "}
-      statsTable.add{type = "label", caption = toStation}
-      statsTable.add{type = "label", caption = round(stats.min/60, 1)}
-      statsTable.add{type = "label", caption = round(stats.max/60, 1)}
-      statsTable.add{type = "label", caption = round(stats.avg/60, 1)}
-      statsTable.add{type = "label", caption = round(stats.sets[stats.index]/60, 1)}
+    if not displayed[fromStation][toStation] and statsToDisplay[fromStation] and (statsToDisplay[fromStation][toStation] or guiSetting == "waitingTimes" ) then
+      local stats = guiSetting == "waitingTimes" and statsToDisplay[fromStation] or statsToDisplay[fromStation][toStation]
+      toStation = guiSetting == "waitingTimes" and "" or toStation
+      statsTable.add(GUI.label({caption = fromStation}))
+      statsTable.add(GUI.label({caption = " "}))
+      statsTable.add(GUI.label({caption = toStation}))
+      statsTable.add(GUI.label({caption = round(stats.min/60, 1)}))
+      statsTable.add(GUI.label({caption = round(stats.max/60, 1)}))
+      statsTable.add(GUI.label({caption = round(stats.avg/60, 1)}))
+      local last = stats.sets[stats.index] and stats.sets[stats.index] or 0
+      statsTable.add(GUI.label({caption = round(last/60, 1)}))
     end
-    --[[
-    local stats = data.waitingTimes[fromStation]
-    local caption = stats and round(stats.min/60, 1) .. " / " .. round(stats.max/60, 1) .. " / " ..round(stats.avg/60, 1) .. " / " .. round(stats.last/60, 1) or ""
-    statsTable.add{type = "label", caption = caption}
-
-    statsTable.add{type = "label", caption = ""}
-
-    stats = stats and data.waitingTimes[toStation]
-    caption = stats and round(stats.min/60, 1) .. " / " .. round(stats.max/60, 1) .. " / " ..round(stats.avg/60, 1) .. " / " .. round(stats.last/60, 1) or ""
-    statsTable.add{type = "label", caption = caption}
-
-    statsTable.add{type = "label", caption = ""}
-    statsTable.add{type = "label", caption = ""}
-    statsTable.add{type = "label", caption = ""}
-    statsTable.add{type = "label", caption = ""}
-]]--
+    displayed[fromStation][toStation] = true
   end
   return mainFrame
 end
 
+GUI.changeDisplay = function(player_index, displayedStats)
+  local player = game.players[player_index]
+  global.guiSettings[player_index].displayedStats = displayedStats
+  if player.gui.left.trainStats then
+    GUI.destroy(player)
+    if global.player[player.index] then
+      local trainData = Trains.getData(global.player[player.index].train)
+      trainData.guis[player.index] = GUI.create(player)
+    end
+  end
+end
+
 GUI.displayTravelTime = function(event)
-  game.players[event.player_index].print("traveltime")
-  log(serpent.block(event, {comment=false}))
+  GUI.changeDisplay(event.player_index, "travelTimes")
 end
 
 GUI.displayWaitingTime = function(event)
-  game.players[event.player_index].print("waitingtime")
-  log(serpent.block(event, {comment=false}))
+  GUI.changeDisplay(event.player_index, "waitingTimes")
 end
 
 GUI.displaySignalTimes = function(event)
-  game.players[event.player_index].print("signaltimes")
-  log(serpent.block(event, {comment=false}))
+  GUI.changeDisplay(event.player_index, "signalTimes")
 end
 
 local function on_train_changed_state(event)
@@ -292,6 +319,8 @@ GUI.on_click('trainstats_tgl_signals', GUI.displaySignalTimes)
 script.on_init(onInit)
 script.on_load(onLoad)
 script.on_configuration_changed(onConfigurationChanged)
+script.on_event(defines.events.on_player_created, on_player_created)
+
 -- /c remote.call("trainstats", "init")
 local interface = {}
 interface.init = function()
